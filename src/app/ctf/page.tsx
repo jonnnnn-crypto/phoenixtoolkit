@@ -182,29 +182,45 @@ export default function CtfArena() {
       ? `${promptOverride}`
       : `Analyze and decode this ciphertext. Extract any CTF flags. Input:\n\n${aiInput}`;
     if (!payload.trim() && !aiInput.trim()) return;
+    
     setAiLoading(true);
     setAiOutput("DeepSeek AI analyzing...");
+    
     try {
       const res = await fetch("/api/ai", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
           message: payload, 
-          systemPrompt:"You are an elite CTF AI. Be explicit, deterministic, and concise. Provide direct answers." 
+          stream: true,
+          systemPrompt: "You are an elite CTF AI. Be explicit, deterministic, and concise. Provide direct answers." 
         })
       });
       
-      const contentType = res.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        const data = await res.json();
-        setAiOutput(data.result || data.error || "[AI Error]");
-      } else {
+      if (!res.ok) {
         const text = await res.text();
-        setAiOutput(`[HTTP ${res.status}] ${res.statusText || "Server Error"}: ${text.slice(0, 80)}...`);
+        setAiOutput(`[HTTP ${res.status}] Error: ${text.slice(0, 80)}`);
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No reader available");
+
+      let accumulated = "";
+      const decoder = new TextDecoder();
+      setAiOutput("");
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+        setAiOutput(accumulated);
       }
     } catch (err: any) { 
       setAiOutput(`[Connection Error]: ${err.message || "Failed to reach AI engine"}`); 
+    } finally { 
+      setAiLoading(false); 
     }
-    finally { setAiLoading(false); }
   };
 
   const handleToolClick = (tool:{name:string;desc:string;prompt:string}) => {

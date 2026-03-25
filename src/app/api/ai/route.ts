@@ -1,24 +1,16 @@
 import { NextResponse } from "next/server";
 
 const PRIMARY_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
-
 const FALLBACK_MODELS = [
   "stepfun/step-3.5-flash:free",
-  "meta-llama/llama-3.1-8b-instruct:free", // Extremely fast
+  "meta-llama/llama-3.1-8b-instruct:free",
 ];
 
-const HF_MODELS = [
-  "Qwen/Qwen2.5-72B-Instruct",
-];
-
-export const maxDuration = 60; // Pro plan only, but kept for compatibility
+export const maxDuration = 60; 
 
 export async function POST(req: Request) {
-  const startTime = Date.now();
-  const VERCEL_FREE_LIMIT = 9000; // 9 seconds absolute deadline for safety
-
   try {
-    const { message, systemPrompt, messages: history } = await req.json();
+    const { message, systemPrompt, messages: history, stream: shouldStream } = await req.json();
 
     let finalMessages = [];
     if (history && Array.isArray(history) && history.length > 0) {
@@ -29,74 +21,110 @@ export async function POST(req: Request) {
     }
 
     const orKey = (process.env.OPENROUTER_API_KEY || "").trim();
-    let lastError = "";
+    if (!orKey) return NextResponse.json({ error: "Missing OpenRouter API Key" }, { status: 501 });
 
-    if (orKey) {
-      const modelsToTry = [PRIMARY_MODEL, ...FALLBACK_MODELS];
-      
-      for (const model of modelsToTry) {
-        const elapsed = Date.now() - startTime;
-        const timeLeft = VERCEL_FREE_LIMIT - elapsed;
-        
-        // If we have less than 2 seconds left, don't even try a heavy model, skip to last or fail
-        if (timeLeft < 2000) break;
+    // ── STREAMING IMPLEMENTATION ───────────────────────────────────────────
+    if (shouldStream) {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(controller) {
+          const modelsToTry = [PRIMARY_MODEL, ...FALLBACK_MODELS];
+          let success = false;
 
-        try {
-          const controller = new AbortController();
-          // Patience: 5s for primary, or whatever is left for fallbacks
-          const patience = model === PRIMARY_MODEL ? Math.min(5000, timeLeft) : timeLeft;
-          const timeoutId = setTimeout(() => controller.abort(), patience); 
-          
-          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${orKey}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer": "https://phoenixtoolkit.vercel.app",
-              "X-Title": "Phoenix CyberSec Toolkit",
-            },
-            body: JSON.stringify({
-              model: model,
-              messages: finalMessages,
-              max_tokens: 16384,
-              reasoning: { enabled: true }
-            }),
-            signal: controller.signal,
-          });
-          clearTimeout(timeoutId);
-
-          if (response.ok) {
-            const data = await response.json();
-            const choice = data?.choices?.[0];
-            const content = choice?.message?.content;
-            
-            if (content) {
-              const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-              return NextResponse.json({ 
-                result: clean, 
-                provider: `OR (${model === PRIMARY_MODEL ? "Nemotron" : "Failover"})`,
-                reasoning_details: choice?.message?.reasoning_details || null
+          for (const model of modelsToTry) {
+            try {
+              const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${orKey}`,
+                  "Content-Type": "application/json",
+                  "HTTP-Referer": "https://phoenixtoolkit.vercel.app",
+                  "X-Title": "Phoenix CyberSec Toolkit",
+                },
+                body: JSON.stringify({
+                  model: model,
+                  messages: finalMessages,
+                  stream: true,
+                  reasoning: { enabled: true }
+                }),
               });
+
+              if (!response.ok) continue; // Try next model if this one fails to start
+
+              const reader = response.body?.getReader();
+              if (!reader) continue;
+
+              success = true;
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const chunk = new TextDecoder().decode(value);
+                const lines = chunk.split("\n");
+
+                for (const line of lines) {
+                  if (line.startsWith("data: ")) {
+                    const dataStr = line.replace("data: ", "").trim();
+                    if (dataStr === "[DONE]") break;
+                    try {
+                      const json = JSON.parse(dataStr);
+                      const content = json.choices?.[0]?.delta?.content || "";
+                      if (content) {
+                        controller.enqueue(encoder.encode(content));
+                      }
+                    } catch {}
+                  }
+                }
+              }
+              break; // Stop after first successful model stream finishes
+            } catch (err) {
+              continue;
             }
-          } else {
-            lastError = `OR [${model}]: ${response.status}`;
-            if (response.status === 401 || response.status === 403) break;
           }
-        } catch (e: unknown) {
-          lastError = `OR Timeout/Error [${model}]`;
-          continue;
-        }
-      }
+          if (!success) {
+            controller.enqueue(encoder.encode("[ERROR]: No AI models available or network failure."));
+          }
+          controller.close();
+        },
+      });
+
+      return new Response(stream, {
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
     }
 
-    // Final ultra-fast fallback or error return
-    return NextResponse.json(
-      { error: `AI Execution took too long or failed. ${lastError}. Please try a shorter prompt.` },
-      { status: 504 } 
-    );
+    // ── NON-STREAMING FALLBACK (Standard JSON) ─────────────────────────────
+    // Keep legacy support for parts of the app that don't need streaming yet
+    for (const model of [PRIMARY_MODEL, ...FALLBACK_MODELS]) {
+      try {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${orKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://phoenixtoolkit.vercel.app",
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: finalMessages,
+            max_tokens: 8192,
+            reasoning: { enabled: true }
+          }),
+        });
 
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 500 });
+        if (response.ok) {
+          const data = await response.json();
+          return NextResponse.json({ 
+            result: data.choices?.[0]?.message?.content || "", 
+            provider: model 
+          });
+        }
+      } catch {}
+    }
+
+    return NextResponse.json({ error: "AI Failed" }, { status: 503 });
+
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
