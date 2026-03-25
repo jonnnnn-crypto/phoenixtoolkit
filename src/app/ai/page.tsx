@@ -78,12 +78,17 @@ export default function AiEngine() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: userMsg })
       });
-      const data = await res.json();
-      
-      if (res.ok) setMessages(prev => [...prev, { role: "ai", content: data.result }]);
-      else setMessages(prev => [...prev, { role: "ai", content: `[ERROR]: ${data.error}` }]);
-    } catch {
-      setMessages(prev => [...prev, { role: "ai", content: "[ERROR]: Core API down." }]);
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        if (res.ok) setMessages(prev => [...prev, { role: "ai", content: data.result }]);
+        else setMessages(prev => [...prev, { role: "ai", content: `[API Error]: ${data.error || "Unknown failure"}` }]);
+      } else {
+        const text = await res.text();
+        setMessages(prev => [...prev, { role: "ai", content: `[HTTP ${res.status}] ${res.statusText || "Server Error"}: ${text.slice(0, 80)}...` }]);
+      }
+    } catch (err: any) {
+      setMessages(prev => [...prev, { role: "ai", content: `[System Error]: ${err.message || "Connection failed"}` }]);
     } finally {
       setLoading(false);
     }
@@ -262,7 +267,9 @@ ${input}
           </div>
           <div>
             <h1 className="text-2xl font-bold text-white">AI Analysis Engine</h1>
-            <p className="text-sm text-[var(--neon-green)] font-mono">HF Router: DeepSeek-R1 • Enabled</p>
+            <p className="text-sm text-[var(--neon-green)] font-mono flex items-center gap-2">
+              <Activity size={12} /> Nemotron-3 • Build v33.1 • Enabled
+            </p>
           </div>
         </div>
 
