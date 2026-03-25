@@ -187,11 +187,23 @@ export default function CtfArena() {
     try {
       const res = await fetch("/api/ai", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ message: payload, systemPrompt:"You are an elite CTF AI. Be explicit, deterministic, and concise. Provide direct answers." })
+        body:JSON.stringify({ 
+          message: payload, 
+          systemPrompt:"You are an elite CTF AI. Be explicit, deterministic, and concise. Provide direct answers." 
+        })
       });
-      const data = await res.json();
-      setAiOutput(data.result || data.error || "[AI Error]");
-    } catch { setAiOutput("[Network Error]"); }
+      
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        setAiOutput(data.result || data.error || "[AI Error]");
+      } else {
+        const text = await res.text();
+        setAiOutput(`[HTTP ${res.status}] ${res.statusText || "Server Error"}: ${text.slice(0, 80)}...`);
+      }
+    } catch (err: any) { 
+      setAiOutput(`[Connection Error]: ${err.message || "Failed to reach AI engine"}`); 
+    }
     finally { setAiLoading(false); }
   };
 

@@ -39,7 +39,7 @@ export async function POST(req: Request) {
       for (const model of modelsToTry) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 45000); 
+          const timeoutId = setTimeout(() => controller.abort(), 7000); // 7s timeout for Vercel Free stability
           
           const requestBody: any = {
             model: model,
