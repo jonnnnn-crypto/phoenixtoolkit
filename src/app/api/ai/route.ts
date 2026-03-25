@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 
 // Primary model requested by the user
-const OPENROUTER_PRIMARY_MODEL = "stepfun/step-3.5-flash:free";
+const PRIMARY_MODEL = "stepfun/step-3.5-flash:free";
+
+// Silent failovers strictly for 429 (Rate Limit) or 503 (Overloaded) scenarios
+const FALLBACK_MODELS = [
+  "meta-llama/llama-3.1-8b-instruct:free",
+  "qwen/qwen-2.5-72b-instruct:free",
+];
 
 const HF_MODELS = [
   "Qwen/Qwen2.5-72B-Instruct",
@@ -22,56 +28,70 @@ export async function POST(req: Request) {
       finalMessages.push({ role: "user", content: message });
     }
 
+    const orKey = (process.env.OPENROUTER_API_KEY || "").trim();
     let lastError = "";
 
-    // ── APPROACH 1: OpenRouter (Stepfun Only) ────────────────────────────────
-    const orKey = (process.env.OPENROUTER_API_KEY || "").trim();
-    
+    // ── APPROACH 1: OpenRouter (Primary & Smart Failover) ────────────────────
     if (orKey) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 45000); 
-        
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${orKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://phoenixtoolkit.vercel.app",
-            "X-Title": "Phoenix CyberSec Toolkit",
-          },
-          body: JSON.stringify({
-            model: OPENROUTER_PRIMARY_MODEL,
-            messages: finalMessages,
-            max_tokens: 16384,
-            reasoning: { enabled: true }
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-          const data = await response.json();
-          const choice = data?.choices?.[0];
-          const content = choice?.message?.content;
+      const modelsToTry = [PRIMARY_MODEL, ...FALLBACK_MODELS];
+      
+      for (const model of modelsToTry) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 45000); 
           
-          if (content) {
-            const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-            return NextResponse.json({ 
-              result: clean, 
-              provider: `OpenRouter (Stepfun 3.5)`,
-              reasoning_details: choice?.message?.reasoning_details || null
-            });
+          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${orKey}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer": "https://phoenixtoolkit.vercel.app",
+              "X-Title": "Phoenix CyberSec Toolkit",
+            },
+            body: JSON.stringify({
+              model: model,
+              messages: finalMessages,
+              max_tokens: 16384,
+              reasoning: { enabled: true }
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+
+          if (response.ok) {
+            const data = await response.json();
+            const choice = data?.choices?.[0];
+            const content = choice?.message?.content;
+            
+            if (content) {
+              const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+              return NextResponse.json({ 
+                result: clean, 
+                provider: `OpenRouter (${model === PRIMARY_MODEL ? "Stepfun" : "Failover: " + model})`,
+                reasoning_details: choice?.message?.reasoning_details || null
+              });
+            }
+          } else {
+            const status = response.status;
+            const errText = await response.text();
+            lastError = `OR [${model}]: ${status} - ${errText.slice(0, 100)}`;
+            
+            // If the primary model is rate-limited (429) or down (503), try the next in the list.
+            // If it's 401/403 (Auth), stop immediately.
+            if (status === 401 || status === 403) break;
+            if (status === 429 || status === 503 || status === 404 || status === 500) continue;
+            
+            // For other errors on the primary, we also try to failover once
+            continue;
           }
-        } else {
-          lastError = `OpenRouter [Stepfun]: ${response.status} - ${await response.text()}`;
+        } catch (e: unknown) {
+          lastError = `OR Exception [${model}]: ${e instanceof Error ? e.message : String(e)}`;
+          continue;
         }
-      } catch (e: unknown) {
-        lastError = `OpenRouter Exception: ${e instanceof Error ? e.message : String(e)}`;
       }
     }
 
-    // ── APPROACH 2: Legacy HF Inference (Disaster Fallback) ──────────────────
+    // ── APPROACH 2: Legacy HF Inference (Safety Fallback) ────────────────────
     const hfKey = (process.env.HF_TOKEN || "").trim();
     if (hfKey) {
       for (const model of HF_MODELS) {
@@ -104,7 +124,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json(
-      { error: `AI Unreachable. ${lastError}` },
+      { error: `AI Exhausted. ${lastError}` },
       { status: 503 }
     );
 
