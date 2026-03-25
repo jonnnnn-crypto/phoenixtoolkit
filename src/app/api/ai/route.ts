@@ -16,23 +16,39 @@ const HF_MODELS = [
 
 export async function POST(req: Request) {
   try {
-    const { message, systemPrompt } = await req.json();
+    const { message, systemPrompt, messages: history } = await req.json();
 
-    const messages = [];
-    if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
-    messages.push({ role: "user", content: message });
+    // Construct message history: priority to 'history' if provided for multi-turn
+    let finalMessages = [];
+    if (history && Array.isArray(history)) {
+      finalMessages = history;
+    } else {
+      if (systemPrompt) finalMessages.push({ role: "system", content: systemPrompt });
+      finalMessages.push({ role: "user", content: message });
+    }
 
     let lastError = "";
 
-    // ── APPROACH 1: OpenRouter (Multi-Model Free Rotation) ──────────────────
+    // ── APPROACH 1: OpenRouter (Multi-Model Free Rotation with Reasoning) ───
     const orKey = (process.env.OPENROUTER_API_KEY || "").trim();
     
     if (orKey) {
       for (const model of OPENROUTER_FREE_MODELS) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 20000);
+          const timeoutId = setTimeout(() => controller.abort(), 25000);
           
+          const requestBody: any = {
+            model: model,
+            messages: finalMessages,
+            max_tokens: 4000,
+          };
+
+          // Enable 'reasoning' for the primary Step-3.5 model as requested
+          if (model.includes("step-3.5")) {
+             requestBody.reasoning = { enabled: true };
+          }
+
           const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -41,36 +57,37 @@ export async function POST(req: Request) {
               "HTTP-Referer": "https://phoenixtoolkit.vercel.app",
               "X-Title": "Phoenix CyberSec Toolkit",
             },
-            body: JSON.stringify({
-              model: model,
-              messages: messages,
-              max_tokens: 4000,
-            }),
+            body: JSON.stringify(requestBody),
             signal: controller.signal,
           });
           clearTimeout(timeoutId);
 
           if (response.ok) {
             const data = await response.json();
-            const content = data?.choices?.[0]?.message?.content;
+            const choice = data?.choices?.[0];
+            const content = choice?.message?.content;
+            
             if (content) {
+              // Strip <think> tags (from DeepSeek) or handle reasoning_details if needed
               const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-              return NextResponse.json({ result: clean, provider: `OpenRouter (${model})` });
+              
+              // Return both content and reasoning_details for multi-turn persistence
+              return NextResponse.json({ 
+                result: clean, 
+                provider: `OpenRouter (${model})`,
+                reasoning_details: choice?.message?.reasoning_details || null
+              });
             }
           } else {
             const errText = await response.text();
             lastError = `OpenRouter [${model}]: ${response.status} - ${errText.slice(0, 150)}`;
-            // If it's a 429 (Rate Limit), we move to the next model in the list
             if (response.status === 429) continue;
-            // If it's 401/403 (Auth), we might want to stop the OR chain early
             if (response.status === 401 || response.status === 403) break;
           }
         } catch (e: unknown) {
           lastError = `OpenRouter Exception [${model}]: ${e instanceof Error ? e.message : String(e)}`;
         }
       }
-    } else {
-      lastError = "OpenRouter: API Key is missing.";
     }
 
     // ── APPROACH 2: Legacy HF Inference (Fallback) ──────────────────────────
@@ -111,7 +128,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json(
-      { error: `All AI Providers Depleted. ${lastError}` },
+      { error: `AI Execution Failure. ${lastError}` },
       { status: 503 }
     );
 
