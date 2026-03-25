@@ -154,31 +154,66 @@ export default function AiEngine() {
     let templateRules = "";
     if (reportTemplate === "HackerOne") {
         templateRules = `
-You MUST format the report using the EXACT HackerOne template below:
-**Summary:** [add summary of the vulnerability]
-**Description:** [add more details about this vulnerability]
+You MUST format the report using the professional HackerOne (H1) disclosure standard:
+**Vulnerability Title:** [Concise, impactful title]
+**Summary:** [Provide a high-level summary of the vulnerability and its impact]
+**Description:** [Detailed explanation of the technical root cause]
+**CWE Classification:** [Determine most relevant CWE ID]
+
 ## Steps To Reproduce:
-1. [add step]
-2. [add step]
-3. [add step]
-## Impact: [add why this issue matters]
+1. [Prerequisites: account types, browser, etc.]
+2. [Step-by-step reproduction guide]
+3. [Observed vs Expected result]
+
+## Proof of Concept (PoC):
+[Provide PoC links, scripts, or payloads]
+
+## Impact:
+[Detailed business and technical impact analysis. What can an attacker achieve?]
+
+## Suggested Mitigation / Remediation:
+[Provide actionable fix recommendations]
+
 ## Supporting Material/References:
 * [Ensure PoC URL and Drive Link are perfectly hyperlinked here]`;
     } else if (reportTemplate === "Bugcrowd") {
         templateRules = `
-You MUST format the report using the EXACT Bugcrowd VRT standard:
-# Vulnerability Name
-**VRT Classification:** [determine VRT]
+You MUST format the report using the Bugcrowd VRT (Vulnerability Rating Taxonomy) standard:
+# [Vulnerability Name]
+**VRT Category:** [e.g., Server-Side Injection -> SQL Injection]
+**Technical Severity:** [P1 - P5 based on technical impact]
+
 ## Description
-[detailed description]
+[Technical deep dive into the vulnerability found in the logs]
+
 ## Proof of Concept (PoC)
-[Steps and PoC URL]
+1. [Precise steps to trigger the bug]
+2. [Payload used]
+3. [PoC URL/Evidence]
+
+## Root Cause Analysis
+[Explain why the vulnerability exists in the code/server]
+
 ## Remediation
-[How to fix]
+[Provide specific code-level or configuration-level fix instructions]
+
 ## References
-[Ensure PoC URL and Drive Link are perfectly hyperlinked here]`;
+* [Ensure PoC URL and Drive Link are perfectly hyperlinked here]`;
     } else {
-        templateRules = "Include sections: Executive Summary, Target Scope, Vulnerabilities Found (with CVSS estimates), Technical Details, Actionable Remediation Steps, and References.";
+        // Professional BugHunter / Standard Template
+        templateRules = `
+You MUST generate a Tier-1 Professional Security Assessment Report:
+1. **Executive Summary**: High-level overview for stakeholders.
+2. **Vulnerability Analysis**: 
+   - **Type**: [Vulnerability Name]
+   - **CWE**: [e.g., CWE-79 for XSS]
+   - **CVSS v3.1 Score**: [e.g., 8.1 High - Base Vector provided]
+3. **Target Scope**: [Asset URL/IP analyzed]
+4. **Technical Details**: Deep dive into the logs and attack vector.
+5. **Attack Scenario**: How a real attacker would weaponize this.
+6. **Step-by-Step PoC**: Repeatable instructions.
+7. **Remediation Strategies**: Immediate fix and long-term prevention.
+8. **References & Evidence**: [Integrate PoC URL and Drive Link here]`;
     }
 
     const systemPrompt = `You are an elite Cybersecurity professional. The user will provide raw output logs from penetration testing tools (like Nmap, Nuclei, Sqlmap, FFUF). 
@@ -201,12 +236,18 @@ ${input}
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: generatedPrompt, systemPrompt })
       });
-      const data = await res.json();
       
-      if (res.ok) setReportResult(data.result);
-      else setReportResult(`[SYSTEM ERROR]: ${data.error}`);
-    } catch {
-      setReportResult("[SYSTEM ERROR]: Core API processing failed.");
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        if (res.ok) setReportResult(data.result);
+        else setReportResult(`[API Error]: ${data.error || "Unknown error"}`);
+      } else {
+        const text = await res.text();
+        setReportResult(`[HTTP ${res.status}] ${res.statusText || "Server Error"}: ${text.slice(0, 100)}...`);
+      }
+    } catch (err: any) {
+      setReportResult(`[System Error]: ${err.message || "Failed to process report"}`);
     } finally {
       setLoading(false);
     }
