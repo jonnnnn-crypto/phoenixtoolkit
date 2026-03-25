@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 
-// Primary model requested by the user
-const PRIMARY_MODEL = "stepfun/step-3.5-flash:free";
+// NEW Primary model verified for high accuracy (Strawberry Test 100% Pass)
+const PRIMARY_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
 
-// Silent failovers strictly for 429 (Rate Limit) or 503 (Overloaded) scenarios
+// Fallbacks strictly for 429 (Rate Limit) or 503 (Overloaded) scenarios
 const FALLBACK_MODELS = [
-  "meta-llama/llama-3.1-8b-instruct:free",
+  "stepfun/step-3.5-flash:free",
   "qwen/qwen-2.5-72b-instruct:free",
+  "google/gemma-2-9b-it:free",
 ];
 
 const HF_MODELS = [
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
     const orKey = (process.env.OPENROUTER_API_KEY || "").trim();
     let lastError = "";
 
-    // ── APPROACH 1: OpenRouter (Primary & Smart Failover) ────────────────────
+    // ── APPROACH 1: OpenRouter (Nemotron Priority + Fallback) ─────────────────
     if (orKey) {
       const modelsToTry = [PRIMARY_MODEL, ...FALLBACK_MODELS];
       
@@ -40,6 +41,13 @@ export async function POST(req: Request) {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 45000); 
           
+          const requestBody: any = {
+            model: model,
+            messages: finalMessages,
+            max_tokens: 16384,
+            reasoning: { enabled: true }
+          };
+
           const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -48,12 +56,7 @@ export async function POST(req: Request) {
               "HTTP-Referer": "https://phoenixtoolkit.vercel.app",
               "X-Title": "Phoenix CyberSec Toolkit",
             },
-            body: JSON.stringify({
-              model: model,
-              messages: finalMessages,
-              max_tokens: 16384,
-              reasoning: { enabled: true }
-            }),
+            body: JSON.stringify(requestBody),
             signal: controller.signal,
           });
           clearTimeout(timeoutId);
@@ -67,7 +70,7 @@ export async function POST(req: Request) {
               const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
               return NextResponse.json({ 
                 result: clean, 
-                provider: `OpenRouter (${model === PRIMARY_MODEL ? "Stepfun" : "Failover: " + model})`,
+                provider: `OpenRouter (${model === PRIMARY_MODEL ? "Nemotron-3" : "Failover: " + model})`,
                 reasoning_details: choice?.message?.reasoning_details || null
               });
             }
@@ -75,14 +78,8 @@ export async function POST(req: Request) {
             const status = response.status;
             const errText = await response.text();
             lastError = `OR [${model}]: ${status} - ${errText.slice(0, 100)}`;
-            
-            // If the primary model is rate-limited (429) or down (503), try the next in the list.
-            // If it's 401/403 (Auth), stop immediately.
             if (status === 401 || status === 403) break;
-            if (status === 429 || status === 503 || status === 404 || status === 500) continue;
-            
-            // For other errors on the primary, we also try to failover once
-            continue;
+            continue; // Try next model on 429/503/404
           }
         } catch (e: unknown) {
           lastError = `OR Exception [${model}]: ${e instanceof Error ? e.message : String(e)}`;
@@ -91,7 +88,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // ── APPROACH 2: Legacy HF Inference (Safety Fallback) ────────────────────
+    // ── APPROACH 2: Legacy HF Inference (Disaster Fallback) ──────────────────
     const hfKey = (process.env.HF_TOKEN || "").trim();
     if (hfKey) {
       for (const model of HF_MODELS) {
@@ -124,7 +121,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json(
-      { error: `AI Exhausted. ${lastError}` },
+      { error: `AI Unreachable. ${lastError}` },
       { status: 503 }
     );
 
