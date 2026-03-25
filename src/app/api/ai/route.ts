@@ -84,8 +84,13 @@ export async function POST(req: Request) {
           continue;
         }
 
+        // Strip <think>...</think> reasoning blocks (DeepSeek-R1 artifact)
+        const clean = content
+          .replace(/<think>[\s\S]*?<\/think>/gi, "")
+          .trim();
+
         return NextResponse.json({
-          result: content,
+          result: clean,
           provider: provider.name,
         });
 

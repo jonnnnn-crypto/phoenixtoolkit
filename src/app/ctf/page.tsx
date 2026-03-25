@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import CryptoJS from "crypto-js";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   BrainCircuit, Copy, RefreshCw, ChevronRight, Lock, Hash, Code, Shuffle,
   Globe, Activity, Shield, Eye, Cpu, Terminal, Wifi, FileText, Layers
@@ -344,16 +346,40 @@ export default function CtfArena() {
               </div>
               <textarea value={aiInput} onChange={e=>{setAiInput(e.target.value);setActiveTool(null);}}
                 placeholder={"Paste ciphertext or hash here, OR click a tool card above.\n\nAI only fires when you press [Deploy AI] — never automatically."}
-                className="w-full bg-transparent p-4 text-sm text-gray-300 resize-none focus:outline-none h-36 leading-relaxed font-mono"/>
+                className="w-full bg-transparent p-4 text-sm text-gray-300 resize-none focus:outline-none h-48 leading-relaxed font-mono"/>
             </div>
             <div>
               <div className="px-4 py-2 border-b border-[rgba(255,255,255,0.03)]">
                 <span className="text-[9px] text-gray-700 uppercase tracking-widest">AI Response</span>
               </div>
-              <div className="p-4 h-36 overflow-auto">
-                {aiLoading ? <div className="flex items-center gap-2 text-gray-500 text-xs font-mono"><Activity size={12} className="animate-spin text-[var(--cyber-blue)]"/> Querying DeepSeek-R1...</div>
-                  : aiOutput ? <pre className="text-xs text-[var(--cyber-blue)] whitespace-pre-wrap leading-relaxed">{aiOutput}</pre>
-                  : <p className="text-gray-700 text-xs font-mono">AI response appears here after you press Deploy AI.</p>}
+              <div className="p-4 h-48 overflow-auto custom-scrollbar">
+                {aiLoading
+                  ? <div className="flex items-center gap-2 text-gray-500 text-xs font-mono"><Activity size={12} className="animate-spin text-[var(--cyber-blue)]"/> Querying AI Engine...</div>
+                  : aiOutput
+                  ? <div className="prose prose-invert prose-sm max-w-none text-xs leading-relaxed">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          h1: (p) => <h1 className="text-base font-bold text-white mt-3 mb-2" {...p}/>,
+                          h2: (p) => <h2 className="text-sm font-bold text-[var(--cyber-blue)] mt-3 mb-1 border-b border-[rgba(255,255,255,0.08)] pb-1" {...p}/>,
+                          h3: (p) => <h3 className="text-xs font-bold text-[var(--neon-green)] mt-2 mb-1" {...p}/>,
+                          p: (p) => <p className="text-gray-300 mb-2 leading-relaxed" {...p}/>,
+                          ul: (p) => <ul className="list-disc pl-4 mb-2 text-gray-300 space-y-0.5 marker:text-[var(--neon-green)]" {...p}/>,
+                          ol: (p) => <ol className="list-decimal pl-4 mb-2 text-gray-300 space-y-0.5" {...p}/>,
+                          li: (p) => <li className="text-gray-300" {...p}/>,
+                          code: ({className, children, ...p}) => {
+                            const isInline = !className;
+                            return isInline
+                              ? <code className="bg-black/60 text-[var(--neon-green)] px-1 rounded font-mono text-[10px] border border-white/10" {...p}>{children}</code>
+                              : <code className="block bg-black/70 text-gray-300 p-2 rounded font-mono text-[10px] overflow-x-auto my-1 border border-white/5" {...p}>{children}</code>;
+                          },
+                          strong: (p) => <strong className="text-white font-bold" {...p}/>,
+                          blockquote: (p) => <blockquote className="border-l-2 border-[var(--cyber-blue)] pl-3 text-gray-400 italic my-1" {...p}/>,
+                        }}
+                      >{aiOutput}</ReactMarkdown>
+                    </div>
+                  : <p className="text-gray-700 text-xs font-mono">AI response appears here after you press Deploy AI.</p>
+                }
               </div>
             </div>
           </div>
