@@ -346,13 +346,13 @@ export default function CtfArena() {
               </div>
               <textarea value={aiInput} onChange={e=>{setAiInput(e.target.value);setActiveTool(null);}}
                 placeholder={"Paste ciphertext or hash here, OR click a tool card above.\n\nAI only fires when you press [Deploy AI] — never automatically."}
-                className="w-full bg-transparent p-4 text-sm text-gray-300 resize-none focus:outline-none h-48 leading-relaxed font-mono"/>
+                className="w-full bg-transparent p-4 text-sm text-gray-300 resize-none focus:outline-none h-[500px] leading-relaxed font-mono"/>
             </div>
             <div>
               <div className="px-4 py-2 border-b border-[rgba(255,255,255,0.03)]">
                 <span className="text-[9px] text-gray-700 uppercase tracking-widest">AI Response</span>
               </div>
-              <div className="p-4 h-48 overflow-auto custom-scrollbar">
+              <div className="p-4 h-[500px] overflow-auto custom-scrollbar">
                 {aiLoading
                   ? <div className="flex items-center gap-2 text-gray-500 text-xs font-mono"><Activity size={12} className="animate-spin text-[var(--cyber-blue)]"/> Querying AI Engine...</div>
                   : aiOutput
