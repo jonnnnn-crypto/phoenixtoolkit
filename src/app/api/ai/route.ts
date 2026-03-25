@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-// Free HF Serverless Inference API (separate quota from HF Router)
 const HF_MODELS = [
   "Qwen/Qwen2.5-72B-Instruct",
   "mistralai/Mistral-7B-Instruct-v0.3",
@@ -17,13 +16,49 @@ export async function POST(req: Request) {
 
     let lastError = "";
 
+    // ── APPROACH 1: OpenRouter (Reliable Free Tier) ──────────────────────────
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://phoenixtoolkit.vercel.app",
+        },
+        body: JSON.stringify({
+          model: "meta-llama/llama-3.1-8b-instruct:free",
+          messages: messages,
+          max_tokens: 2000,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        const content = data?.choices?.[0]?.message?.content;
+        if (content) {
+          const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+          return NextResponse.json({ result: clean, provider: "OpenRouter (Free)" });
+        }
+      } else {
+        lastError = `OpenRouter: HTTP ${response.status}`;
+      }
+    } catch (e: unknown) {
+      lastError = `OpenRouter Exception: ${e instanceof Error ? e.message : String(e)}`;
+    }
+
+    // ── APPROACH 2: Legacy HF Inference (Often Free) ─────────────────────────
     for (const model of HF_MODELS) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000);
+        const timeoutId = setTimeout(() => controller.abort(), 20000);
 
+        // Standard Inference API (Not V1) - use 'inputs' format
         const response = await fetch(
-          `https://api-inference.huggingface.co/models/${model}/v1/chat/completions`,
+          `https://api-inference.huggingface.co/models/${model}`,
           {
             method: "POST",
             headers: {
@@ -31,40 +66,58 @@ export async function POST(req: Request) {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              model,
-              messages,
-              max_tokens: 3000,
-              stream: false,
+              inputs: `${systemPrompt ? systemPrompt + "\n\n" : ""}User: ${message}\nAssistant:`,
+              parameters: { max_new_tokens: 1500, return_full_text: false },
             }),
             signal: controller.signal,
           }
         );
         clearTimeout(timeoutId);
 
-        if (!response.ok) {
+        if (response.ok) {
+          const data = await response.json();
+          // Legacy format returns array like [{ generated_text: "..." }]
+          const content = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
+          if (content) {
+            const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+            return NextResponse.json({ result: clean, provider: `HF Legacy (${model})` });
+          }
+        } else {
           const errText = await response.text();
-          lastError = `${model}: HTTP ${response.status} — ${errText.slice(0, 150)}`;
-          continue;
+          lastError = `HF Legacy [${model}]: HTTP ${response.status} - ${errText.slice(0, 100)}`;
         }
-
-        const data = await response.json();
-        const content: string = data?.choices?.[0]?.message?.content || "";
-
-        if (!content) { lastError = `${model}: empty response`; continue; }
-
-        // Strip <think>...</think> reasoning blocks
-        const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-
-        return NextResponse.json({ result: clean, model });
-
       } catch (e: unknown) {
-        lastError = `${model}: ${e instanceof Error ? e.message : String(e)}`;
-        continue;
+        lastError = `HF Legacy [${model}] Exception: ${e instanceof Error ? e.message : String(e)}`;
       }
     }
 
+    // ── APPROACH 3: HF Router (Final Attempt) ────────────────────────────────
+    try {
+      const response = await fetch("https://router.huggingface.co/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.HF_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "deepseek-ai/DeepSeek-R1",
+          messages: messages,
+          max_tokens: 1000
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const content = data?.choices?.[0]?.message?.content;
+        if (content) {
+          const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+          return NextResponse.json({ result: clean, provider: "HF Router (Fallback)" });
+        }
+      }
+    } catch {}
+
     return NextResponse.json(
-      { error: `All models failed. Last: ${lastError}` },
+      { error: `AI Unreachable. All fallbacks failed. ${lastError}` },
       { status: 503 }
     );
 
