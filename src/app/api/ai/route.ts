@@ -1,23 +1,22 @@
 import { NextResponse } from "next/server";
 
-// NEW Primary model verified for high accuracy (Strawberry Test 100% Pass)
 const PRIMARY_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
 
-// Fallbacks strictly for 429 (Rate Limit) or 503 (Overloaded) scenarios
 const FALLBACK_MODELS = [
   "stepfun/step-3.5-flash:free",
-  "qwen/qwen-2.5-72b-instruct:free",
-  "google/gemma-2-9b-it:free",
+  "meta-llama/llama-3.1-8b-instruct:free", // Extremely fast
 ];
 
 const HF_MODELS = [
   "Qwen/Qwen2.5-72B-Instruct",
-  "mistralai/Mistral-7B-Instruct-v0.3",
 ];
 
-export const maxDuration = 60; 
+export const maxDuration = 60; // Pro plan only, but kept for compatibility
 
 export async function POST(req: Request) {
+  const startTime = Date.now();
+  const VERCEL_FREE_LIMIT = 9000; // 9 seconds absolute deadline for safety
+
   try {
     const { message, systemPrompt, messages: history } = await req.json();
 
@@ -32,22 +31,22 @@ export async function POST(req: Request) {
     const orKey = (process.env.OPENROUTER_API_KEY || "").trim();
     let lastError = "";
 
-    // ── APPROACH 1: OpenRouter (Nemotron Priority + Fallback) ─────────────────
     if (orKey) {
       const modelsToTry = [PRIMARY_MODEL, ...FALLBACK_MODELS];
       
       for (const model of modelsToTry) {
+        const elapsed = Date.now() - startTime;
+        const timeLeft = VERCEL_FREE_LIMIT - elapsed;
+        
+        // If we have less than 2 seconds left, don't even try a heavy model, skip to last or fail
+        if (timeLeft < 2000) break;
+
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 7000); // 7s timeout for Vercel Free stability
+          // Patience: 5s for primary, or whatever is left for fallbacks
+          const patience = model === PRIMARY_MODEL ? Math.min(5000, timeLeft) : timeLeft;
+          const timeoutId = setTimeout(() => controller.abort(), patience); 
           
-          const requestBody: any = {
-            model: model,
-            messages: finalMessages,
-            max_tokens: 16384,
-            reasoning: { enabled: true }
-          };
-
           const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -56,7 +55,12 @@ export async function POST(req: Request) {
               "HTTP-Referer": "https://phoenixtoolkit.vercel.app",
               "X-Title": "Phoenix CyberSec Toolkit",
             },
-            body: JSON.stringify(requestBody),
+            body: JSON.stringify({
+              model: model,
+              messages: finalMessages,
+              max_tokens: 16384,
+              reasoning: { enabled: true }
+            }),
             signal: controller.signal,
           });
           clearTimeout(timeoutId);
@@ -70,59 +74,25 @@ export async function POST(req: Request) {
               const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
               return NextResponse.json({ 
                 result: clean, 
-                provider: `OpenRouter (${model === PRIMARY_MODEL ? "Nemotron-3" : "Failover: " + model})`,
+                provider: `OR (${model === PRIMARY_MODEL ? "Nemotron" : "Failover"})`,
                 reasoning_details: choice?.message?.reasoning_details || null
               });
             }
           } else {
-            const status = response.status;
-            const errText = await response.text();
-            lastError = `OR [${model}]: ${status} - ${errText.slice(0, 100)}`;
-            if (status === 401 || status === 403) break;
-            continue; // Try next model on 429/503/404
+            lastError = `OR [${model}]: ${response.status}`;
+            if (response.status === 401 || response.status === 403) break;
           }
         } catch (e: unknown) {
-          lastError = `OR Exception [${model}]: ${e instanceof Error ? e.message : String(e)}`;
+          lastError = `OR Timeout/Error [${model}]`;
           continue;
         }
       }
     }
 
-    // ── APPROACH 2: Legacy HF Inference (Disaster Fallback) ──────────────────
-    const hfKey = (process.env.HF_TOKEN || "").trim();
-    if (hfKey) {
-      for (const model of HF_MODELS) {
-        try {
-          const response = await fetch(
-            `https://api-inference.huggingface.co/models/${model}`,
-            {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${hfKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                inputs: `${systemPrompt ? systemPrompt + "\n\n" : ""}User: ${message}\nAssistant:`,
-                parameters: { max_new_tokens: 2048, return_full_text: false },
-              }),
-            }
-          );
-
-          if (response.ok) {
-            const data = await response.json();
-            const content = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
-            if (content) {
-              const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-              return NextResponse.json({ result: clean, provider: `HF Legacy (${model})` });
-            }
-          }
-        } catch {}
-      }
-    }
-
+    // Final ultra-fast fallback or error return
     return NextResponse.json(
-      { error: `AI Unreachable. ${lastError}` },
-      { status: 503 }
+      { error: `AI Execution took too long or failed. ${lastError}. Please try a shorter prompt.` },
+      { status: 504 } 
     );
 
   } catch (err: unknown) {
