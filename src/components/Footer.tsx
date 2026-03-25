@@ -8,10 +8,9 @@ export default function Footer() {
           &copy; {new Date().getFullYear()} Phoenix CyberSec. All rights reserved.
         </p>
         <div className="flex gap-6 text-sm text-gray-400">
-          <Link href="/dashboard" className="hover:text-[var(--neon-green)] transition-colors">Tools</Link>
-          <Link href="/modules" className="hover:text-[var(--neon-green)] transition-colors">Modules</Link>
-          <Link href="/docs" className="hover:text-[var(--neon-green)] transition-colors">Docs</Link>
-          <Link href="/api-docs" className="hover:text-[var(--neon-green)] transition-colors">API</Link>
+          <Link href="/ctf" className="hover:text-[var(--neon-green)] transition-colors">CTF Lab</Link>
+          <Link href="/ai" className="hover:text-[var(--neon-green)] transition-colors">AI Engine</Link>
+          <Link href="/cve" className="hover:text-[var(--neon-green)] transition-colors">Pentest Recon</Link>
         </div>
         <p className="text-[var(--neon-green)] font-mono text-xs tracking-widest drop-shadow-[0_0_5px_rgba(34,197,94,0.3)]">
           // Production by PhoenixCySec

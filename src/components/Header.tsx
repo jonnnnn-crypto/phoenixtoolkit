@@ -12,10 +12,9 @@ export default function Header() {
           </span>
         </div>
         <nav className="hidden md:flex gap-8 text-sm font-medium text-gray-400">
-          <Link href="/dashboard" className="hover:text-[var(--neon-green)] transition-colors">Tools</Link>
-          <Link href="/modules" className="hover:text-[var(--neon-green)] transition-colors">Modules</Link>
-          <Link href="/docs" className="hover:text-[var(--neon-green)] transition-colors">Docs</Link>
-          <Link href="/api-docs" className="hover:text-[var(--neon-green)] transition-colors">API</Link>
+          <Link href="/ctf" className="hover:text-[var(--neon-green)] transition-colors">CTF Lab</Link>
+          <Link href="/ai" className="hover:text-[var(--neon-green)] transition-colors">AI Engine</Link>
+          <Link href="/cve" className="hover:text-[var(--neon-green)] transition-colors">Pentest Recon</Link>
         </nav>
         <button className="neon-border px-6 py-2 rounded-md text-sm font-semibold text-[var(--neon-green)] hover:bg-[var(--neon-green)] hover:text-black transition-all shadow-[0_0_15px_rgba(34,197,94,0.2)]">
           Launch System
