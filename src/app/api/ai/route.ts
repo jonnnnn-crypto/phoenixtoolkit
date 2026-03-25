@@ -16,21 +16,23 @@ export async function POST(req: Request) {
 
     let lastError = "";
 
-    // ── APPROACH 1: OpenRouter (Reliable Free Tier) ──────────────────────────
+    // ── APPROACH 1: OpenRouter (Primary Model: Step-3.5-Flash-Free) ──────────
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
       
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
           "HTTP-Referer": "https://phoenixtoolkit.vercel.app",
+          "X-Title": "Phoenix CyberSec Toolkit",
         },
         body: JSON.stringify({
-          model: "meta-llama/llama-3.1-8b-instruct:free",
+          model: "stepfun/step-3.5-flash:free", // Specified by user
           messages: messages,
-          max_tokens: 2000,
+          max_tokens: 4000,
         }),
         signal: controller.signal,
       });
@@ -41,22 +43,24 @@ export async function POST(req: Request) {
         const content = data?.choices?.[0]?.message?.content;
         if (content) {
           const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-          return NextResponse.json({ result: clean, provider: "OpenRouter (Free)" });
+          return NextResponse.json({ result: clean, provider: "OpenRouter (Step-3.5-Flash)" });
         }
       } else {
-        lastError = `OpenRouter: HTTP ${response.status}`;
+        const errJson = await response.json().catch(() => ({}));
+        lastError = `OpenRouter: HTTP ${response.status} - ${JSON.stringify(errJson)}`;
       }
     } catch (e: unknown) {
       lastError = `OpenRouter Exception: ${e instanceof Error ? e.message : String(e)}`;
     }
 
-    // ── APPROACH 2: Legacy HF Inference (Often Free) ─────────────────────────
+    // ── APPROACH 2: Legacy HF Inference (Fallback) ──────────────────────────
     for (const model of HF_MODELS) {
+      if (lastError.includes("401") || lastError.includes("403")) break; // Don't try HF if OR fails on keys
+      
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 20000);
 
-        // Standard Inference API (Not V1) - use 'inputs' format
         const response = await fetch(
           `https://api-inference.huggingface.co/models/${model}`,
           {
@@ -76,48 +80,17 @@ export async function POST(req: Request) {
 
         if (response.ok) {
           const data = await response.json();
-          // Legacy format returns array like [{ generated_text: "..." }]
           const content = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
           if (content) {
             const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
             return NextResponse.json({ result: clean, provider: `HF Legacy (${model})` });
           }
-        } else {
-          const errText = await response.text();
-          lastError = `HF Legacy [${model}]: HTTP ${response.status} - ${errText.slice(0, 100)}`;
         }
-      } catch (e: unknown) {
-        lastError = `HF Legacy [${model}] Exception: ${e instanceof Error ? e.message : String(e)}`;
-      }
+      } catch {}
     }
 
-    // ── APPROACH 3: HF Router (Final Attempt) ────────────────────────────────
-    try {
-      const response = await fetch("https://router.huggingface.co/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.HF_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "deepseek-ai/DeepSeek-R1",
-          messages: messages,
-          max_tokens: 1000
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const content = data?.choices?.[0]?.message?.content;
-        if (content) {
-          const clean = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-          return NextResponse.json({ result: clean, provider: "HF Router (Fallback)" });
-        }
-      }
-    } catch {}
-
     return NextResponse.json(
-      { error: `AI Unreachable. All fallbacks failed. ${lastError}` },
+      { error: `AI Connection Failed. ${lastError}` },
       { status: 503 }
     );
 
